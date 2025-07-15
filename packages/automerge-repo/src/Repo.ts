@@ -43,6 +43,7 @@ import type {
 } from "./types.js"
 import { abortable, AbortOptions, AbortError } from "./helpers/abortable.js"
 import { FindProgress } from "./FindProgress.js"
+import { Sedimentree } from "./sedimentree.js"
 
 export type FindProgressWithMethods<T> = FindProgress<T> & {
   untilReady: (allowableStates: string[]) => Promise<DocHandle<T>>
@@ -70,6 +71,7 @@ function randomPeerId() {
  */
 export class Repo extends EventEmitter<RepoEvents> {
   #log: debug.Debugger
+  #sedimentree: Sedimentree | undefined
 
   /** @hidden */
   networkSubsystem: NetworkSubsystem
@@ -321,6 +323,11 @@ export class Repo extends EventEmitter<RepoEvents> {
         }
       )
     }
+
+    if (sedimentreeImplementation != null) {
+      this.#sedimentree = sedimentreeImplementation
+      this.#sedimentree.start(sedimentreeAdapters || [])
+    }
   }
 
   // The `document` event is fired by the DocCollection any time we create a new document or look
@@ -333,6 +340,33 @@ export class Repo extends EventEmitter<RepoEvents> {
         // Save when the document changes
         handle.on("heads-changed", this.#saveFn)
       }
+    }
+
+    if (this.#sedimentree != null) {
+      this.#sedimentree.find(handle.documentId).then(data => {
+        if (data == null) {
+          handle.unavailableSedimentree()
+          return
+        }
+        handle.update(d => {
+          let doc = d
+          for (const chunk of data) {
+            doc = Automerge.loadIncremental(doc, chunk)
+          }
+          return doc
+        })
+      })
+      this.#sedimentree.on("change", handle.documentId, data => {
+        handle.update(d => {
+          let doc = d
+          for (const chunk of data) {
+            doc = Automerge.loadIncremental(doc, chunk)
+          }
+          return doc
+        })
+      })
+    } else {
+      handle.unavailableSedimentree()
     }
 
     // Register the document with the synchronizer. This advertises our interest in the document.
