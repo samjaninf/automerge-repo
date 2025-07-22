@@ -15,40 +15,51 @@ import { App } from "./App.js"
 import { State } from "./types.js"
 import "./index.css"
 
-const repo = new Repo({
-  network: [
-    new BroadcastChannelNetworkAdapter(),
-    new WebSocketClientAdapter("ws://localhost:3030"),
-  ],
-  storage: new IndexedDBStorageAdapter("automerge-repo-demo-todo"),
-})
+import { Sedimentree, DummySedimentree } from "../../../packages/automerge-repo/src/sedimentree"
+// import { initSync } from "../../../../sedimentree/sedimentree_sync_wasm/pkg/sedimentree_sync_wasm.js"
+// import { SedimentreeNetwork } from "../../../../sedimentree/sedimentree_sync_wasm/pkg/sedimentree_sync_wasm"
+import init, { initSync, SedimentreeNetwork } from "../pkg/sedimentree_sync_wasm.js"
+// TODO
+// Hardcode docID to server and load in URL fragment
 
-declare global {
-  interface Window {
-    handle: DocHandle<unknown>
-    repo: Repo
+(async () => {
+  await init("../pkg/sedimentree_sync_wasm_bg.wasm")
+
+  const repo = new Repo({
+    network: [],
+    sedimentreeAdapters: [new WebSocketClientAdapter("ws://localhost:3030")],
+    sedimentreeImplementation: new DummySedimentree(new Map()), // TODO REPLACE THIS (port to wasm)
+    // sedimentreeImplementation: new SedimentreeNetwork([]), // TODO REPLACE THIS (port to wasm)
+    storage: new IndexedDBStorageAdapter("automerge-repo-demo-todo"),
+  })
+
+  declare global {
+    interface Window {
+      handle: DocHandle<unknown>
+      repo: Repo
+    }
   }
-}
 
-const rootDocUrl = `${document.location.hash.substring(1)}`
-let handle
-if (isValidAutomergeUrl(rootDocUrl)) {
-  handle = await repo.find(rootDocUrl)
-} else {
-  handle = repo.create<State>({ todos: [] })
-}
-const docUrl = (document.location.hash = handle.url)
-window.handle = handle // we'll use this later for experimentation
-window.repo = repo
+  const rootDocUrl = `${document.location.hash.substring(1)}`
+  let handle
+  if (isValidAutomergeUrl(rootDocUrl)) {
+    handle = await repo.find(rootDocUrl)
+  } else {
+    handle = repo.create<State>({ todos: [] })
+  }
+  const docUrl = (document.location.hash = handle.url)
+  window.handle = handle // we'll use this later for experimentation
+  window.repo = repo
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <RepoContext.Provider value={repo}>
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <RepoContext.Provider value={repo}>
     <React.StrictMode>
-      <ErrorBoundary fallback={<div>Something went wrong</div>}>
-        <Suspense fallback={<div>Loading...</div>}>
-          <App url={docUrl} />
-        </Suspense>
-      </ErrorBoundary>
+    <ErrorBoundary fallback={<div>Something went wrong</div>}>
+      <Suspense fallback={<div>Loading...</div>}>
+        <App url={docUrl} />
+      </Suspense>
+    </ErrorBoundary>
     </React.StrictMode>
-  </RepoContext.Provider>
-)
+    </RepoContext.Provider>
+  )
+})()

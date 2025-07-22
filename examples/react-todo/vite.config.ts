@@ -9,4 +9,6 @@ export default defineConfig({
     format: "es",
     plugins: () => [wasm()],
   },
+
+  assetsInclude: ['**/*.wasm']
 })

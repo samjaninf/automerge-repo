@@ -48,14 +48,19 @@ export class DummySedimentree implements Sedimentree {
   }
 
   start(adapters: NetworkAdapterInterface[]): void {}
+  // addNetworkAdapter(...): void {} // Add, remove adapters
+  // removeNetworkAdapter(...): void {} // Add, remove adapters
   async stop(): Promise<void> {}
   async whenReady(): Promise<boolean> {
     return true
   }
 
+  // NOTE BZ right now returns a commplete Automerge RLE compressed doc
   find(documentId: DocumentId): Promise<Uint8Array[] | undefined> {
+    console.log("Finding doc", documentId)
     const doc = this.#docs.get(documentId)
     if (doc) {
+      console.log("DummySedimentree returning doc", documentId, doc)
       return Promise.resolve([A.save(doc)])
     } else {
       return Promise.resolve(undefined)
