@@ -16,11 +16,7 @@ import { State } from "./types.js"
 import "./index.css"
 
 import { Sedimentree, DummySedimentree } from "../../../packages/automerge-repo/src/sedimentree"
-// import { initSync } from "../../../../sedimentree/sedimentree_sync_wasm/pkg/sedimentree_sync_wasm.js"
-// import { SedimentreeNetwork } from "../../../../sedimentree/sedimentree_sync_wasm/pkg/sedimentree_sync_wasm"
 import init, { initSync, SedimentreeNetwork } from "../pkg/sedimentree_sync_wasm.js"
-// TODO
-// Hardcode docID to server and load in URL fragment
 
 (async () => {
   await init("../pkg/sedimentree_sync_wasm_bg.wasm")
@@ -28,8 +24,7 @@ import init, { initSync, SedimentreeNetwork } from "../pkg/sedimentree_sync_wasm
   const repo = new Repo({
     network: [],
     sedimentreeAdapters: [new WebSocketClientAdapter("ws://localhost:3030")],
-    sedimentreeImplementation: new DummySedimentree(new Map()), // TODO REPLACE THIS (port to wasm)
-    // sedimentreeImplementation: new SedimentreeNetwork([]), // TODO REPLACE THIS (port to wasm)
+    sedimentreeImplementation: new SedimentreeNetwork([]),
     storage: new IndexedDBStorageAdapter("automerge-repo-demo-todo"),
   })
 
