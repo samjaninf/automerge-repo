@@ -26,7 +26,7 @@ abstract class WebSocketNetworkAdapter extends NetworkAdapter {
 export class WebSocketClientAdapter extends WebSocketNetworkAdapter {
   #ready = false
   #readyResolver?: () => void
-  #readyPromise: Promise<void> = new Promise<void>(resolve => {
+  #readyPromise?: Promise<void> = new Promise<void>(resolve => {
     this.#readyResolver = resolve
   })
 

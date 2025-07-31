@@ -1,8 +1,10 @@
 import { defineConfig } from "vitest/config"
+import viteConfig from "./vite.config"
 import path from "path"
 import solid from "vite-plugin-solid"
 
 export default defineConfig({
+  ...viteConfig,
   test: {
     projects: ["packages/*"],
     globals: true,

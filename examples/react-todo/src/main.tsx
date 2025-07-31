@@ -12,19 +12,38 @@ import React, { Suspense } from "react"
 import { ErrorBoundary } from "react-error-boundary"
 import ReactDOM from "react-dom/client"
 import { App } from "./App.js"
-import { State } from "./types.js"
+import { State, PeerId } from "./types.js"
 import "./index.css"
 
-import { Sedimentree, DummySedimentree } from "../../../packages/automerge-repo/src/sedimentree"
-import init, { initSync, SedimentreeNetwork } from "../pkg/sedimentree_sync_wasm.js"
+import {
+  Sedimentree,
+  DummySedimentree,
+  DocumentId,
+} from "../../../packages/automerge-repo/src/sedimentree"
+import init, { SedimentreeWasm } from "../pkg/sedimentree_sync_wasm.js"
+;(async () => {
+  await init("../pkg/sedimentree_sync_wasm_bg.wasm?url")
 
-(async () => {
-  await init("../pkg/sedimentree_sync_wasm_bg.wasm")
+  const ws = new WebSocketClientAdapter("ws://localhost:8080")
+  ws.connect("peer-id" as PeerId)
+  await ws.whenReady()
+
+  const sedimentree = new SedimentreeWasm(new Map(), [ws])
+
+  sedimentree.on(
+    "some_doc",
+    ((docId: DocumentId) => {
+      console.log(`Ran for: ${docId}`)
+    }).bind(null)
+  )
 
   const repo = new Repo({
     network: [],
-    sedimentreeAdapters: [new WebSocketClientAdapter("ws://localhost:3030")],
-    sedimentreeImplementation: new SedimentreeNetwork([]),
+    sedimentree, // TODO Init with a JS websocket
+    // TODO single messgae: requets a doc, reponds with witg I have it or I don't
+    // TODO CLI tool
+    // TODO Stream & Sync interfaces in Rust, but harder in JS/Wasm
+    // TODO Actually store to disk on sync server
     storage: new IndexedDBStorageAdapter("automerge-repo-demo-todo"),
   })
 
@@ -48,13 +67,13 @@ import init, { initSync, SedimentreeNetwork } from "../pkg/sedimentree_sync_wasm
 
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <RepoContext.Provider value={repo}>
-    <React.StrictMode>
-    <ErrorBoundary fallback={<div>Something went wrong</div>}>
-      <Suspense fallback={<div>Loading...</div>}>
-        <App url={docUrl} />
-      </Suspense>
-    </ErrorBoundary>
-    </React.StrictMode>
+      <React.StrictMode>
+        <ErrorBoundary fallback={<div>Something went wrong</div>}>
+          <Suspense fallback={<div>Loading...</div>}>
+            <App url={docUrl} />
+          </Suspense>
+        </ErrorBoundary>
+      </React.StrictMode>
     </RepoContext.Provider>
   )
 })()

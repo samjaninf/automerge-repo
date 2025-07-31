@@ -4,7 +4,7 @@ import * as A from "@automerge/automerge"
 
 export interface Sedimentree {
   // Called by the repo when the network should start work
-  start(adapters: NetworkAdapterInterface[]): void
+  start(): void
 
   // Called by the repo when the network should shut down
   stop(): Promise<void>
@@ -41,15 +41,48 @@ export interface Sedimentree {
   newCommit(documentId: DocumentId, hash: string, data: Uint8Array): void
 }
 
+export type AdapterId = string & { __adapterId: true }
+
 export class DummySedimentree implements Sedimentree {
   #docs: Map<DocumentId, A.Doc<unknown>> = new Map()
-  constructor(docs: Map<DocumentId, A.Doc<unknown>>) {
+  #networkAdapters: Map<AdapterId, NetworkAdapterInterface> = new Map()
+
+  constructor({
+    docs,
+    networkAdapters,
+  }: {
+    docs: Map<DocumentId, A.Doc<unknown>>
+    networkAdapters: NetworkAdapterInterface[]
+  }) {
     this.#docs = docs
+
+    for (const adapter of networkAdapters) {
+      const adapterId: AdapterId = `adapter-${Math.random()
+        .toString(36)
+        .substring(2)}` as AdapterId
+      this.#networkAdapters.set(adapterId, adapter)
+    }
   }
 
-  start(adapters: NetworkAdapterInterface[]): void {}
-  // addNetworkAdapter(...): void {} // Add, remove adapters
-  // removeNetworkAdapter(...): void {} // Add, remove adapters
+  start(): void {}
+
+  getAdapters(): Map<AdapterId, NetworkAdapterInterface> {
+    return this.#networkAdapters
+  }
+
+  addNetworkAdapter(adapter: NetworkAdapterInterface): AdapterId {
+    const adapterId: AdapterId = `adapter-${Math.random()
+      .toString(36)
+      .substring(2)}` as AdapterId
+    this.#networkAdapters.set(adapterId, adapter)
+    return adapterId
+  }
+
+  removeNetworkAdapter(adapterId: AdapterId): void {
+    this.#networkAdapters.get(adapterId)?.disconnect() // FIXME needed?
+    this.#networkAdapters.delete(adapterId)
+  }
+
   async stop(): Promise<void> {}
   async whenReady(): Promise<boolean> {
     return true

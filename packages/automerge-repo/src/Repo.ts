@@ -118,6 +118,7 @@ export class Repo extends EventEmitter<RepoEvents> {
     denylist = [],
     saveDebounceRate = 100,
     idFactory,
+    sedimentree,
   }: RepoConfig = {}) {
     super()
     this.#remoteHeadsGossipingEnabled = enableRemoteHeadsGossiping
@@ -324,9 +325,9 @@ export class Repo extends EventEmitter<RepoEvents> {
       )
     }
 
-    if (sedimentreeImplementation != null) {
-      this.#sedimentree = sedimentreeImplementation
-      this.#sedimentree.start(sedimentreeAdapters || [])
+    if (sedimentree != null) {
+      this.#sedimentree = sedimentree
+      this.#sedimentree.start()
     }
   }
 
@@ -682,6 +683,11 @@ export class Repo extends EventEmitter<RepoEvents> {
     }
     this.#progressCache[documentId] = result
     return result
+  }
+
+  // FIXME remove
+  sedimentree(): Sedimentree | undefined {
+    return this.#sedimentree
   }
 
   async #loadDocumentWithProgress<T>(
@@ -1061,12 +1067,16 @@ export interface RepoConfig {
    */
   saveDebounceRate?: number
 
+<<<<<<< HEAD
   // This is hidden for now because it's an experimental API, mostly here in order
   // for keyhive to be able to control the ID generation
   /**
    * @hidden
    */
   idFactory?: (initialHeads: Heads) => Promise<Uint8Array>
+=======
+  sedimentree?: Sedimentree
+>>>>>>> 86937985 (Save)
 }
 
 /** A function that determines whether we should share a document with a peer
