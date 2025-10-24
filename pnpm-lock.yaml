@@ -11,6 +11,9 @@ importers:
       '@automerge/automerge':
         specifier: ^3.1.2
         version: 3.1.2
+      '@automerge/sedimentree_automerge':
+        specifier: file:../subduction/sedimentree_automerge_wasm
+        version: '@automerge/sediment_automerge_wasm@file:../subduction/sedimentree_automerge_wasm'
       '@automerge/subduction':
         specifier: file:../subduction/subduction_wasm
         version: file:../subduction/subduction_wasm
@@ -280,6 +283,9 @@ importers:
       '@automerge/automerge':
         specifier: 2.2.8 - 3
         version: 3.1.2
+      '@automerge/sedimentree_automerge':
+        specifier: file:../../../subduction/sedimentree_automerge_wasm
+        version: '@automerge/sediment_automerge_wasm@file:../subduction/sedimentree_automerge_wasm'
       '@automerge/subduction':
         specifier: file:../../../subduction/subduction_wasm
         version: file:../subduction/subduction_wasm
@@ -521,6 +527,9 @@ packages:
 
   '@automerge/automerge@3.1.2':
     resolution: {integrity: sha512-rAZRLAMrboBJGMmZXPOfYiwkmHXho6RjhUOIrlmf+Buukt/DN1oee8kHfpI3U4etetvGgqf5JaFVbydQpKT/Vg==}
+
+  '@automerge/sediment_automerge_wasm@file:../subduction/sedimentree_automerge_wasm':
+    resolution: {directory: ../subduction/sedimentree_automerge_wasm, type: directory}
 
   '@automerge/subduction@file:../subduction/subduction_wasm':
     resolution: {directory: ../subduction/subduction_wasm, type: directory}
@@ -6948,6 +6957,8 @@ snapshots:
   '@automerge/automerge@3.0.0': {}
 
   '@automerge/automerge@3.1.2': {}
+
+  '@automerge/sediment_automerge_wasm@file:../subduction/sedimentree_automerge_wasm': {}
 
   '@automerge/subduction@file:../subduction/subduction_wasm': {}
 

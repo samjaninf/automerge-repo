@@ -45,6 +45,7 @@ import { abortable, AbortOptions, AbortError } from "./helpers/abortable.js"
 import { FindProgress } from "./FindProgress.js"
 // import { Subduction } from "./subduction.js"
 import * as Wasm from "@automerge/subduction"
+import { SedimentreeAutomerge } from "@automerge/sedimentree_automerge"
 
 export type FindProgressWithMethods<T> = FindProgress<T> & {
   untilReady: (allowableStates: string[]) => Promise<DocHandle<T>>
@@ -374,6 +375,14 @@ export class Repo extends EventEmitter<RepoEvents> {
       // FIXME merge them here
       handle.update(d => {
         let doc = d
+        const digest = new Wasm.Digest(new Uint8Array(32))
+
+        // FIXME note to self: just testing the API, this shouldn't ahppen here!
+        const hashMetric = new Wasm.HashMetric(null)
+        const sam = new SedimentreeAutomerge(d)
+        let boundary = sam.fragment(digest, hashMetric)
+
+        doc.getChangeMetaByHash(new Uint8Array(32))
         for (const blob of blobs) {
           doc = Automerge.loadIncremental(doc, blob)
         }
@@ -849,6 +858,8 @@ export class Repo extends EventEmitter<RepoEvents> {
     const loadedDoc = await (this.storageSubsystem
       ? this.storageSubsystem.loadDoc(handle.documentId)
       : Promise.resolve(null))
+
+    // FIXME do a complete sync here
 
     if (loadedDoc) {
       // We need to cast this to <T> because loadDoc operates in <unknowns>.
