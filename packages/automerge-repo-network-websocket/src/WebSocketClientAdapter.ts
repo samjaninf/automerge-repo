@@ -35,7 +35,7 @@ export class WebSocketClientAdapter extends WebSocketNetworkAdapter {
   }
 
   whenReady() {
-    return this.#readyPromise
+    return this.#readyPromise! // FIXME that `!`
   }
 
   #forceReady() {

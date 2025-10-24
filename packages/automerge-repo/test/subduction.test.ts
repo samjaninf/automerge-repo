@@ -2,45 +2,44 @@ import * as A from "@automerge/automerge"
 import { describe, expect, it } from "vitest"
 import assert from "assert"
 import { generateAutomergeUrl, parseAutomergeUrl } from "../src/AutomergeUrl.js"
-import { DummySedimentree } from "../src/sedimentree.js"
+import { DummySubduction } from "../src/subduction.js"
 import { Repo } from "../src/Repo.js"
-import init, { SedimentreeWasm } from "./pkg/sedimentree_sync_wasm.js"
+import init, { SubductionSyncWasm } from "./pkg/subduction_sync_wasm.js"
 import fs from "fs/promises"
 import { fileURLToPath } from "url"
 import { dirname, join } from "path"
 
-describe("Repo sedimentree integration", () => {
-  it("should find documents from sedimentree", async () => {
+import * as Wasm from "@automerge/subduction"
+
+describe("Repo subduction integration", () => {
+  it("should find documents from subduction", async () => {
     const url = generateAutomergeUrl()
     const { documentId } = parseAutomergeUrl(url)
     const doc = A.from({ foo: "bar" })
     const repo = new Repo({
-      sedimentree: new DummySedimentree({
-        docs: new Map([[documentId, doc]]),
-        networkAdapters: [],
-      }),
+      subduction: new Wasm.Subduction(),
     })
     const handle = await repo.find(url)
     assert.deepEqual(handle.doc().foo, "bar")
   })
 })
 
-describe("Wasm repo sedimentree integration", () => {
-  it("should find documents from sedimentree", async () => {
+describe("Wasm repo subduction integration", () => {
+  it("should find documents from subduction", async () => {
     const __filename = fileURLToPath(import.meta.url)
     const __dirname = dirname(__filename)
-    const wasmPath = join(__dirname, "pkg", "sedimentree_sync_wasm_bg.wasm")
+    const wasmPath = join(__dirname, "pkg", "subduction_sync_wasm_bg.wasm")
     const wasmBytes = await fs.readFile(wasmPath)
     await init(wasmBytes)
 
     const url = generateAutomergeUrl()
     const { documentId } = parseAutomergeUrl(url)
-    const doc = A.from({ foo: "bar" })
 
     const repo = new Repo({
-      sedimentree: new SedimentreeWasm(new Map([[documentId, doc]]), []),
+      subduction: new SubductionSyncWasm(new Map([]), [], []),
     })
-    const handle = await repo.sedimentree().find(url)
-    // assert.deepEqual(handle.doc().foo, "bar")
+    const handle = await repo.find(url)
+    await handle.whenReady()
+    assert.equal(handle.doc().foo, "bar")
   })
 })

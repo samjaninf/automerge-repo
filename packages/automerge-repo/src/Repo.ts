@@ -43,7 +43,8 @@ import type {
 } from "./types.js"
 import { abortable, AbortOptions, AbortError } from "./helpers/abortable.js"
 import { FindProgress } from "./FindProgress.js"
-import { Sedimentree } from "./sedimentree.js"
+// import { Subduction } from "./subduction.js"
+import * as Wasm from "@automerge/subduction"
 
 export type FindProgressWithMethods<T> = FindProgress<T> & {
   untilReady: (allowableStates: string[]) => Promise<DocHandle<T>>
@@ -71,7 +72,7 @@ function randomPeerId() {
  */
 export class Repo extends EventEmitter<RepoEvents> {
   #log: debug.Debugger
-  #sedimentree: Sedimentree | undefined
+  #subduction: Wasm.Subduction
 
   /** @hidden */
   networkSubsystem: NetworkSubsystem
@@ -118,7 +119,7 @@ export class Repo extends EventEmitter<RepoEvents> {
     denylist = [],
     saveDebounceRate = 100,
     idFactory,
-    sedimentree,
+    subduction,
   }: RepoConfig = {}) {
     super()
     this.#remoteHeadsGossipingEnabled = enableRemoteHeadsGossiping
@@ -325,10 +326,31 @@ export class Repo extends EventEmitter<RepoEvents> {
       )
     }
 
-    if (sedimentree != null) {
-      this.#sedimentree = sedimentree
-      this.#sedimentree.start()
-    }
+    const subPeerId = new Wasm.PeerId(new Uint8Array(32)) // FIXME
+
+    const ws = new WebSocket("ws://localhost:8080")
+    const wsAdapter = new Wasm.SubductionWebSocket(subPeerId, ws, 5000)
+
+    // let db = new Promise((resolve, _reject) => {
+    //   const request = indexedDB.open("@automerge/subduction/db", 1) // FIXME export DB_NAME
+    //   request.onsuccess = () => resolve(request.result)
+    // })
+    // const dbFactory = window.indexedDB
+    // const dbRequest: IDBOpenDBRequest = dbFactory.open("my-database", 1)
+
+    // dbRequest.onsuccess = event => {
+    //   const db = dbRequest.result
+    //   console.log("Database opened:", db.name)
+    // }
+
+    // const storage = await IndexedDbStorage.setup(await db)
+
+    // const ensuredSubduction: Wasm.Subduction =
+    //   subduction || new Wasm.Subduction(storage)
+    if (!subduction) throw new Error("Subduction instance is required") // FIXME
+    subduction.attach(wsAdapter)
+    // ensuredSubduction.run()
+    this.#subduction = subduction
   }
 
   // The `document` event is fired by the DocCollection any time we create a new document or look
@@ -343,32 +365,36 @@ export class Repo extends EventEmitter<RepoEvents> {
       }
     }
 
-    if (this.#sedimentree != null) {
-      this.#sedimentree.find(handle.documentId).then(data => {
-        if (data == null) {
-          handle.unavailableSedimentree()
-          return
+    let doc_id = Wasm.SedimentreeId.fromBytes(new Uint8Array(32))
+    this.#subduction.fetchBlobs(doc_id, null).then(blobs => {
+      if (!blobs) {
+        handle.unavailableSubduction()
+        return
+      }
+      // FIXME merge them here
+      handle.update(d => {
+        let doc = d
+        for (const blob of blobs) {
+          doc = Automerge.loadIncremental(doc, blob)
         }
-        handle.update(d => {
-          let doc = d
-          for (const chunk of data) {
-            doc = Automerge.loadIncremental(doc, chunk)
-          }
+        return doc
+      })
+    })
+
+    // FIXME
+    this.#subduction.onCommit(
+      (
+        _id: Wasm.SedimentreeId,
+        _loose_commit: Wasm.LooseCommit,
+        data: Uint8Array
+      ) => {
+        console.log("subduction onCommit", _id)
+        handle.update(doc => {
+          doc = Automerge.loadIncremental(doc, data)
           return doc
         })
-      })
-      this.#sedimentree.on("change", handle.documentId, data => {
-        handle.update(d => {
-          let doc = d
-          for (const chunk of data) {
-            doc = Automerge.loadIncremental(doc, chunk)
-          }
-          return doc
-        })
-      })
-    } else {
-      handle.unavailableSedimentree()
-    }
+      }
+    )
 
     // Register the document with the synchronizer. This advertises our interest in the document.
     this.synchronizer.addDocument(handle)
@@ -438,7 +464,7 @@ export class Repo extends EventEmitter<RepoEvents> {
     /** The documentId of the handle to look up or create */
     documentId: DocumentId /** If we know we're creating a new document, specify this so we can have access to it immediately */
   }) {
-    // If we have the handle cached, return it
+    // If we have the handle cached, return it FIXME NOW UNDER SUBDUCTION?
     if (this.#handleCache[documentId]) return this.#handleCache[documentId]
 
     // If not, create a new handle, cache it, and return it
@@ -685,11 +711,6 @@ export class Repo extends EventEmitter<RepoEvents> {
     return result
   }
 
-  // FIXME remove
-  sedimentree(): Sedimentree | undefined {
-    return this.#sedimentree
-  }
-
   async #loadDocumentWithProgress<T>(
     id: AnyDocumentId,
     documentId: DocumentId,
@@ -777,6 +798,7 @@ export class Repo extends EventEmitter<RepoEvents> {
 
     if ("subscribe" in progress) {
       this.#registerHandleWithSubsystems(progress.handle)
+      console.log("state", progress.handle.state)
       return new Promise((resolve, reject) => {
         const unsubscribe = progress.subscribe(state => {
           if (allowableStates.includes(state.handle.state)) {
@@ -789,6 +811,12 @@ export class Repo extends EventEmitter<RepoEvents> {
             unsubscribe()
             reject(state.error)
           }
+          console.warn(
+            "state not in allowable states:",
+            progress.handle.state,
+            "not in",
+            allowableStates
+          )
         })
       })
     } else {
@@ -1067,16 +1095,13 @@ export interface RepoConfig {
    */
   saveDebounceRate?: number
 
-<<<<<<< HEAD
   // This is hidden for now because it's an experimental API, mostly here in order
   // for keyhive to be able to control the ID generation
   /**
    * @hidden
    */
   idFactory?: (initialHeads: Heads) => Promise<Uint8Array>
-=======
-  sedimentree?: Sedimentree
->>>>>>> 86937985 (Save)
+  subduction?: Wasm.Subduction
 }
 
 /** A function that determines whether we should share a document with a peer

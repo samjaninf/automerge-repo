@@ -144,12 +144,12 @@ export class DocHandle<T> extends EventEmitter<DocHandleEvents<T>> {
                 },
               },
             },
-            sedimentree: {
+            subduction: {
               initial: "requesting",
               states: {
                 requesting: {
                   on: {
-                    DOC_UNAVAILABLE_SEDIMENTREE: "unavailable",
+                    DOC_UNAVAILABLE_SUBDUCTION: "unavailable",
                   },
                   after: { [delay]: "unavailable" },
                 },
@@ -720,8 +720,8 @@ export class DocHandle<T> extends EventEmitter<DocHandleEvents<T>> {
     this.#machine.send({ type: "DOC_UNAVAILABLE_SYNC_V1" })
   }
 
-  unavailableSedimentree() {
-    this.#machine.send({ type: "DOC_UNAVAILABLE_SEDIMENTREE" })
+  unavailableSubduction() {
+    this.#machine.send({ type: "DOC_UNAVAILABLE_SUBDUCTION" })
   }
 
   /**
@@ -914,7 +914,7 @@ type DocHandleEvent<T> =
   | { type: typeof DELETE }
   | { type: typeof TIMEOUT }
   | { type: typeof DOC_UNAVAILABLE_SYNC_V1 }
-  | { type: typeof DOC_UNAVAILABLE_SEDIMENTREE }
+  | { type: typeof DOC_UNAVAILABLE_SUBDUCTION }
 
 const BEGIN = "BEGIN"
 const REQUEST = "REQUEST"
@@ -925,4 +925,4 @@ const RELOAD = "RELOAD"
 const DELETE = "DELETE"
 const TIMEOUT = "TIMEOUT"
 const DOC_UNAVAILABLE_SYNC_V1 = "DOC_UNAVAILABLE_SYNC_V1"
-const DOC_UNAVAILABLE_SEDIMENTREE = "DOC_UNAVAILABLE_SEDIMENTREE"
+const DOC_UNAVAILABLE_SUBDUCTION = "DOC_UNAVAILABLE_SUBDUCTION"

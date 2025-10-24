@@ -38,6 +38,10 @@ export class BroadcastChannelNetworkAdapter extends NetworkAdapter {
   })
   #connectedPeers: PeerId[] = []
 
+  receive(_message: Message) {
+    // FIXME
+  }
+
   isReady() {
     return this.#ready
   }

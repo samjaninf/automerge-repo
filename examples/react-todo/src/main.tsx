@@ -16,21 +16,24 @@ import { State, PeerId } from "./types.js"
 import "./index.css"
 
 import {
-  Sedimentree,
-  DummySedimentree,
+  Subduction,
+  DummySubduction,
   DocumentId,
-} from "../../../packages/automerge-repo/src/sedimentree"
-import init, { SedimentreeWasm } from "../pkg/sedimentree_sync_wasm.js"
+} from "../../../packages/automerge-repo/src/subduction"
+import init, { SubductionSyncWasm } from "../pkg/subduction_sync_wasm.js"
 ;(async () => {
-  await init("../pkg/sedimentree_sync_wasm_bg.wasm?url")
+  await init("../pkg/subduction_sync_wasm_bg.wasm?url")
 
   const ws = new WebSocketClientAdapter("ws://localhost:8080")
   ws.connect("peer-id" as PeerId)
   await ws.whenReady()
 
-  const sedimentree = new SedimentreeWasm(new Map(), [ws])
+  const db = new IndexedDBStorageAdapter("automerge-repo-demo-todo")
 
-  sedimentree.on(
+  // FIXME
+  const subduction = new SubductionSyncWasm(new Map(), [ws], [db])
+
+  subduction.on(
     "some_doc",
     ((docId: DocumentId) => {
       console.log(`Ran for: ${docId}`)
@@ -39,12 +42,12 @@ import init, { SedimentreeWasm } from "../pkg/sedimentree_sync_wasm.js"
 
   const repo = new Repo({
     network: [],
-    sedimentree, // TODO Init with a JS websocket
+    subduction, // TODO Init with a JS websocket
     // TODO single messgae: requets a doc, reponds with witg I have it or I don't
     // TODO CLI tool
     // TODO Stream & Sync interfaces in Rust, but harder in JS/Wasm
     // TODO Actually store to disk on sync server
-    storage: new IndexedDBStorageAdapter("automerge-repo-demo-todo"),
+    storage: db,
   })
 
   declare global {

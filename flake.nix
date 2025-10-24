@@ -10,6 +10,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        pnpm = "${pkgs.nodePackages.pnpm}/bin/pnpm";
 
         dev = pkgs.writeShellApplication {
           name = "dev";
@@ -36,6 +37,15 @@
           '';
         };
 
+        test_subduction = pkgs.writeShellApplication {
+          name = "test_subduction";
+          runtimeInputs = [
+            pkgs.nodejs_24
+            pkgs.pnpm
+          ];
+          text = "${pnpm} test ./packages/automerge-repo/test/subduction";
+        };
+
       in
         {
           devShell = pkgs.mkShell {
@@ -58,6 +68,11 @@
           apps.react_todo_example = {
             type = "app";
             program = "${react_todo_example}/bin/react_todo_example";
+          };
+
+          apps.test_subduction = {
+            type = "app";
+            program = "${test_subduction}/bin/test_subduction";
           };
         }
     );
