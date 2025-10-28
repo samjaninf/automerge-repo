@@ -3,19 +3,21 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
+    unstable-nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, unstable-nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        unstable = import unstable-nixpkgs { inherit system; };
         pnpm = "${pkgs.nodePackages.pnpm}/bin/pnpm";
 
         dev = pkgs.writeShellApplication {
           name = "dev";
           runtimeInputs = [
-            pkgs.nodejs_24
+            pkgs.nodejs_20
             pkgs.pnpm
           ];
           text = ''
@@ -27,7 +29,7 @@
         react_todo_example = pkgs.writeShellApplication {
           name = "react_todo_example";
           runtimeInputs = [
-            pkgs.nodejs_24
+            pkgs.nodejs_20
             pkgs.pnpm
           ];
           text = ''
@@ -40,7 +42,7 @@
         test_subduction = pkgs.writeShellApplication {
           name = "test_subduction";
           runtimeInputs = [
-            pkgs.nodejs_24
+            pkgs.nodejs_20
             pkgs.pnpm
           ];
           text = "${pnpm} test ./packages/automerge-repo/test/subduction";
@@ -53,8 +55,9 @@
             formatter = pkgs.alejandra;
 
             nativeBuildInputs = [
-              pkgs.nodejs_24
+              pkgs.nodejs_20
               pkgs.pnpm
+	      unstable.eslint
             ];
           };
 

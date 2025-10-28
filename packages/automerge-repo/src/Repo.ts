@@ -43,9 +43,11 @@ import type {
 } from "./types.js"
 import { abortable, AbortOptions, AbortError } from "./helpers/abortable.js"
 import { FindProgress } from "./FindProgress.js"
-// import { Subduction } from "./subduction.js"
 import * as Wasm from "@automerge/subduction"
-import { SedimentreeAutomerge } from "@automerge/sedimentree_automerge"
+import {
+  SedimentreeAutomerge,
+  digestOfBase58Id,
+} from "@automerge/sedimentree_automerge"
 
 export type FindProgressWithMethods<T> = FindProgress<T> & {
   untilReady: (allowableStates: string[]) => Promise<DocHandle<T>>
@@ -350,7 +352,24 @@ export class Repo extends EventEmitter<RepoEvents> {
     //   subduction || new Wasm.Subduction(storage)
     if (!subduction) throw new Error("Subduction instance is required") // FIXME
     subduction.attach(wsAdapter)
-    // ensuredSubduction.run()
+
+    // Additional hooks
+    subduction.onCommit(
+      (id: Wasm.PeerId, loose_commit: Wasm.LooseCommit, _blob: Uint8Array) => {
+        console.log("subduction onCommit", { id, loose_commit })
+      }
+    )
+
+    subduction.onFragment(
+      (id: Wasm.PeerId, fragment: Wasm.Fragment, _blob: Uint8Array) => {
+        console.log("subduction onFragment", { id, fragment })
+      }
+    )
+
+    subduction.onBlob((_blob: Uint8Array) => {
+      console.log("subduction onBlob")
+    })
+
     this.#subduction = subduction
   }
 
@@ -366,44 +385,15 @@ export class Repo extends EventEmitter<RepoEvents> {
       }
     }
 
-    let doc_id = Wasm.SedimentreeId.fromBytes(new Uint8Array(32))
-    this.#subduction.fetchBlobs(doc_id, null).then(blobs => {
-      if (!blobs) {
-        handle.unavailableSubduction()
-        return
-      }
-      // FIXME merge them here
-      handle.update(d => {
-        let doc = d
-        const digest = new Wasm.Digest(new Uint8Array(32))
-
-        // FIXME note to self: just testing the API, this shouldn't ahppen here!
-        const hashMetric = new Wasm.HashMetric(null)
-        const sam = new SedimentreeAutomerge(d)
-        let boundary = sam.fragment(digest, hashMetric)
-
-        doc.getChangeMetaByHash(new Uint8Array(32))
-        for (const blob of blobs) {
-          doc = Automerge.loadIncremental(doc, blob)
-        }
-        return doc
+    const sed = Wasm.Sedimentree.empty()
+    console.log(handle.documentId)
+    // FIXME const id = digestOfBase58Id(handle.documentId)
+    const id = Wasm.SedimentreeId.fromBytes(new Uint8Array(32)) // FIXME
+    this.#subduction.addSedimentree(id, sed).then(() => {
+      this.#log("added sedimentree to subduction", {
+        documentId: handle.documentId,
       })
     })
-
-    // FIXME
-    this.#subduction.onCommit(
-      (
-        _id: Wasm.SedimentreeId,
-        _loose_commit: Wasm.LooseCommit,
-        data: Uint8Array
-      ) => {
-        console.log("subduction onCommit", _id)
-        handle.update(doc => {
-          doc = Automerge.loadIncremental(doc, data)
-          return doc
-        })
-      }
-    )
 
     // Register the document with the synchronizer. This advertises our interest in the document.
     this.synchronizer.addDocument(handle)
@@ -441,7 +431,6 @@ export class Repo extends EventEmitter<RepoEvents> {
     if (!this.storageSubsystem) {
       return
     }
-
     const { storageId, isEphemeral } =
       this.peerMetadataByPeerId[payload.peerId] || {}
 
@@ -859,19 +848,14 @@ export class Repo extends EventEmitter<RepoEvents> {
       ? this.storageSubsystem.loadDoc(handle.documentId)
       : Promise.resolve(null))
 
-    // FIXME do a complete sync here
-
     if (loadedDoc) {
       // We need to cast this to <T> because loadDoc operates in <unknowns>.
       // This is really where we ought to be validating the input matches <T>.
       handle.update(() => loadedDoc as Automerge.Doc<T>)
       handle.doneLoading()
     } else {
-      // Because the network subsystem might still be booting up, we wait
-      // here so that we don't immediately give up loading because we're still
-      // making our initial connection to a sync server.
-      await this.networkSubsystem.whenReady()
-      handle.request()
+      const subduction_id = digestOfBase58Id(documentId)
+      await this.#subduction.requestAllBatchSync(subduction_id)
     }
 
     this.#registerHandleWithSubsystems(handle)

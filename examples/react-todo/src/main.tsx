@@ -2,8 +2,8 @@ import {
   DocHandle,
   Repo,
   isValidAutomergeUrl,
-  BroadcastChannelNetworkAdapter,
-  WebSocketClientAdapter,
+  // BroadcastChannelNetworkAdapter,
+  // WebSocketClientAdapter,
   IndexedDBStorageAdapter,
   RepoContext,
 } from "@automerge/react"
@@ -12,42 +12,33 @@ import React, { Suspense } from "react"
 import { ErrorBoundary } from "react-error-boundary"
 import ReactDOM from "react-dom/client"
 import { App } from "./App.js"
-import { State, PeerId } from "./types.js"
+import { State } from "./types.js"
 import "./index.css"
 
 import {
+  PeerId,
+  SubductionWebSocket,
+  IndexedDbStorage,
   Subduction,
-  DummySubduction,
-  DocumentId,
-} from "../../../packages/automerge-repo/src/subduction"
-import init, { SubductionSyncWasm } from "../pkg/subduction_sync_wasm.js"
+} from "@automerge/subduction"
+import * as sam from "@automerge/sedimentree_automerge"
+
+import * as sub from "@automerge/subduction"
+console.log("exports:", Object.keys(sub))
+
+// import wasmUrl from "@automerge/subduction/subduction_wasm_bg.wasm?wasm"
 ;(async () => {
-  await init("../pkg/subduction_sync_wasm_bg.wasm?url")
+  const peerId = new PeerId(new Uint8Array(32)) // FIXME
+  const ws = new WebSocket("ws://localhost:8080")
+  const subWs = new SubductionWebSocket(peerId, ws, 5000)
+  const db = await IndexedDbStorage.setup(indexedDB)
+  const subduction = new Subduction(db)
 
-  const ws = new WebSocketClientAdapter("ws://localhost:8080")
-  ws.connect("peer-id" as PeerId)
-  await ws.whenReady()
-
-  const db = new IndexedDBStorageAdapter("automerge-repo-demo-todo")
-
-  // FIXME
-  const subduction = new SubductionSyncWasm(new Map(), [ws], [db])
-
-  subduction.on(
-    "some_doc",
-    ((docId: DocumentId) => {
-      console.log(`Ran for: ${docId}`)
-    }).bind(null)
-  )
-
+  const oldDb = new IndexedDBStorageAdapter("automerge-repo-demo-todo")
   const repo = new Repo({
     network: [],
-    subduction, // TODO Init with a JS websocket
-    // TODO single messgae: requets a doc, reponds with witg I have it or I don't
-    // TODO CLI tool
-    // TODO Stream & Sync interfaces in Rust, but harder in JS/Wasm
-    // TODO Actually store to disk on sync server
-    storage: db,
+    subduction,
+    storage: oldDb,
   })
 
   declare global {
