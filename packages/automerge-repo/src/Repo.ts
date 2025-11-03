@@ -129,10 +129,6 @@ export class Repo extends EventEmitter<RepoEvents> {
         super()
         this.#remoteHeadsGossipingEnabled = enableRemoteHeadsGossiping
         this.#log = debug(`automerge-repo:repo`)
-        console.log("&&&&&&&&&&&&&&&&&& 0")
-        Wasm.set_panic_hook()
-
-        console.log("&&&&&&&&&&&&&&&&&& 1")
 
         this.#idFactory = idFactory || null
         // Handle legacy sharePolicy
@@ -150,7 +146,6 @@ export class Repo extends EventEmitter<RepoEvents> {
         if (shareConfig) {
             this.#shareConfig = shareConfig
         }
-        console.log("&&&&&&&&&&&&&&&&&& 2")
 
         this.on("delete-document", ({ documentId }) => {
             this.synchronizer.removeDocument(documentId)
@@ -161,12 +156,10 @@ export class Repo extends EventEmitter<RepoEvents> {
                 })
             }
         })
-        console.log("&&&&&&&&&&&&&&&&&& 3")
 
         // SYNCHRONIZER
         // The synchronizer uses the network subsystem to keep documents in sync with peers.
         this.synchronizer = new CollectionSynchronizer(this, denylist)
-        console.log("&&&&&&&&&&&&&&&&&& 4")
 
         // When the synchronizer emits messages, send them to peers
         this.synchronizer.on("message", message => {
@@ -363,13 +356,8 @@ export class Repo extends EventEmitter<RepoEvents> {
             )
         }
 
-        console.log("&&&&&&&&&&&&&&&&&& 6")
         const subPeerId = new Wasm.PeerId(new Uint8Array(32)) // FIXME
-
-        console.log("&&&&&&&&&&&&&&&&&& 7") // FIXME THIS IS WHY IT CONNECTS TWICE
         const ws = new WebSocket("//127.0.0.1:8080")
-        //
-        console.log("&&&&&&&&&&&&&&&&&& 8")
         const wsAdapter = new Wasm.SubductionWebSocket(subPeerId, ws, 5000)
 
         // let db = new Promise((resolve, _reject) => {
@@ -386,7 +374,6 @@ export class Repo extends EventEmitter<RepoEvents> {
 
         // const storage = await IndexedDbStorage.setup(await db)
 
-        console.log("&&&&&&&&&&&&&&&&&& 9")
         if (!subduction) throw new Error("Subduction instance is required") // FIXME
         subduction.attach(wsAdapter).then(() => {
             console.log("Subduction attached to WebSocket")
@@ -413,7 +400,6 @@ export class Repo extends EventEmitter<RepoEvents> {
             console.log("subduction onBlob")
         })
 
-        console.log("&&&&&&&&&&&&&&&&&& 10")
         this.#subduction = subduction
     }
 
