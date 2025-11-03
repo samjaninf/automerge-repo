@@ -55,9 +55,13 @@
             formatter = pkgs.alejandra;
 
             nativeBuildInputs = [
+              pkgs.eslint
+              pkgs.nodePackages.vscode-langservers-extracted
               pkgs.nodejs_20
               pkgs.pnpm
-	      unstable.eslint
+              pkgs.prettierd
+              pkgs.typescript
+              pkgs.typescript-language-server
             ];
           };
 
