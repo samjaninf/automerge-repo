@@ -9,37 +9,37 @@ import fs from "fs/promises"
 import { fileURLToPath } from "url"
 import { dirname, join } from "path"
 
-import * as Wasm from "@automerge/subduction"
+import { Subduction } from "@automerge/subduction_automerge"
 
 describe("Repo subduction integration", () => {
-  it("should find documents from subduction", async () => {
-    const url = generateAutomergeUrl()
-    const { documentId } = parseAutomergeUrl(url)
-    const doc = A.from({ foo: "bar" })
-    const repo = new Repo({
-      subduction: new Wasm.Subduction(),
+    it("should find documents from subduction", async () => {
+        const url = generateAutomergeUrl()
+        const { documentId } = parseAutomergeUrl(url)
+        const doc = A.from({ foo: "bar" })
+        const repo = new Repo({
+            subduction: new Subduction(),
+        })
+        const handle = await repo.find(url)
+        assert.deepEqual(handle.doc().foo, "bar")
     })
-    const handle = await repo.find(url)
-    assert.deepEqual(handle.doc().foo, "bar")
-  })
 })
 
 describe("Wasm repo subduction integration", () => {
-  it("should find documents from subduction", async () => {
-    const __filename = fileURLToPath(import.meta.url)
-    const __dirname = dirname(__filename)
-    const wasmPath = join(__dirname, "pkg", "subduction_sync_wasm_bg.wasm")
-    const wasmBytes = await fs.readFile(wasmPath)
-    await init(wasmBytes)
+    it("should find documents from subduction", async () => {
+        const __filename = fileURLToPath(import.meta.url)
+        const __dirname = dirname(__filename)
+        const wasmPath = join(__dirname, "pkg", "subduction_sync_wasm_bg.wasm")
+        const wasmBytes = await fs.readFile(wasmPath)
+        await init(wasmBytes)
 
-    const url = generateAutomergeUrl()
-    const { documentId } = parseAutomergeUrl(url)
+        const url = generateAutomergeUrl()
+        const { documentId } = parseAutomergeUrl(url)
 
-    const repo = new Repo({
-      subduction: new SubductionSyncWasm(new Map([]), [], []),
+        const repo = new Repo({
+            subduction: new SubductionSyncWasm(new Map([]), [], []),
+        })
+        const handle = await repo.find(url)
+        await handle.whenReady()
+        assert.equal(handle.doc().foo, "bar")
     })
-    const handle = await repo.find(url)
-    await handle.whenReady()
-    assert.equal(handle.doc().foo, "bar")
-  })
 })

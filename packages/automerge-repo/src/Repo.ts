@@ -1,4 +1,9 @@
-import { next as Automerge, Heads } from "@automerge/automerge/slim"
+import {
+    next as Automerge,
+    encodeChange,
+    decodeChange,
+    Heads,
+} from "@automerge/automerge/slim"
 import debug from "debug"
 import { EventEmitter } from "eventemitter3"
 import {
@@ -43,11 +48,9 @@ import type {
 } from "./types.js"
 import { abortable, AbortOptions, AbortError } from "./helpers/abortable.js"
 import { FindProgress } from "./FindProgress.js"
-import * as Wasm from "@automerge/subduction"
-import {
-    SedimentreeAutomerge,
-    digestOfBase58Id,
-} from "@automerge/sedimentree_automerge"
+import * as Wasm from "@automerge/subduction_automerge"
+import * as bs58check from "bs58check"
+import { applyChanges } from "./index.js"
 
 export type FindProgressWithMethods<T> = FindProgress<T> & {
     untilReady: (allowableStates: string[]) => Promise<DocHandle<T>>
@@ -65,6 +68,8 @@ function randomPeerId() {
     return ("peer-" + Math.random().toString(36).slice(4)) as PeerId
 }
 
+const stringMetric = new Wasm.HashMetric(null)
+
 /** A Repo is a collection of documents with networking, syncing, and storage capabilities. */
 /** The `Repo` is the main entry point of this library
  *
@@ -76,6 +81,9 @@ function randomPeerId() {
 export class Repo extends EventEmitter<RepoEvents> {
     #log: debug.Debugger
     #subduction: Wasm.Subduction
+    #fragmentStateStore: Wasm.FragmentStateStore
+    #recentlySeenHeads: HashRing
+    #lastHeadsSent: Set<string>
 
     /** @hidden */
     networkSubsystem: NetworkSubsystem
@@ -111,6 +119,11 @@ export class Repo extends EventEmitter<RepoEvents> {
     > = {}
     #idFactory: ((initialHeads: Heads) => Promise<Uint8Array>) | null
 
+    // FIXME for debugging only
+    sd(): Wasm.Subduction {
+        return this.#subduction
+    }
+
     constructor({
         storage,
         network = [],
@@ -125,8 +138,12 @@ export class Repo extends EventEmitter<RepoEvents> {
         subduction,
     }: RepoConfig = {}) {
         console.log("Repo constructor", { peerId })
-        console.log("subduction", { subduction })
         super()
+        if (!subduction) throw new Error("Subduction instance is required")
+        this.#fragmentStateStore = new Wasm.FragmentStateStore()
+        this.#recentlySeenHeads = new HashRing(256)
+        this.#lastHeadsSent = new Set<string>()
+
         this.#remoteHeadsGossipingEnabled = enableRemoteHeadsGossiping
         this.#log = debug(`automerge-repo:repo`)
 
@@ -264,11 +281,18 @@ export class Repo extends EventEmitter<RepoEvents> {
                     console.log("error in share policy", { err })
                 })
 
+            // FIXME attachpeer here
             this.synchronizer.addPeer(peerId)
         })
 
         // When a peer disconnects, remove it from the synchronizer
         networkSubsystem.on("peer-disconnected", ({ peerId }) => {
+            const peerIdBytes = new TextEncoder().encode(peerId)
+            const out = new Uint8Array(32)
+            out.set(peerIdBytes.slice(0, 32))
+            const subPeerId = new Wasm.PeerId(out)
+            this.#subduction.disconnect(subPeerId)
+
             this.synchronizer.removePeer(peerId)
             this.#remoteHeadsSubscriptions.removePeer(peerId)
         })
@@ -356,48 +380,53 @@ export class Repo extends EventEmitter<RepoEvents> {
             )
         }
 
-        const subPeerId = new Wasm.PeerId(new Uint8Array(32)) // FIXME
+        const peerIdBytes = new TextEncoder().encode(peerId)
+        const out = new Uint8Array(32)
+        out.set(peerIdBytes.slice(0, 32))
+        const subPeerId = new Wasm.PeerId(out)
         const ws = new WebSocket("//127.0.0.1:8080")
-        const wsAdapter = new Wasm.SubductionWebSocket(subPeerId, ws, 5000)
+        ;(window as any)["ws"] = ws // for debugging
 
-        // let db = new Promise((resolve, _reject) => {
-        //   const request = indexedDB.open("@automerge/subduction/db", 1) // FIXME export DB_NAME
-        //   request.onsuccess = () => resolve(request.result)
-        // })
-        // const dbFactory = window.indexedDB
-        // const dbRequest: IDBOpenDBRequest = dbFactory.open("my-database", 1)
-
-        // dbRequest.onsuccess = event => {
-        //   const db = dbRequest.result
-        //   console.log("Database opened:", db.name)
-        // }
-
-        // const storage = await IndexedDbStorage.setup(await db)
-
-        if (!subduction) throw new Error("Subduction instance is required") // FIXME
-        subduction.attach(wsAdapter).then(() => {
-            console.log("Subduction attached to WebSocket")
+        ws.addEventListener("close", ev => {
+            console.warn(
+                "socket closed",
+                ev.code, // close code (e.g. 1000, 1006…)
+                ev.reason, // optional reason string
+                ev.wasClean // whether a proper close frame was seen
+            )
+            // your callback logic here
         })
 
-        // Additional hooks
-        subduction.onCommit(
-            (
-                id: Wasm.PeerId,
-                loose_commit: Wasm.LooseCommit,
-                _blob: Uint8Array
-            ) => {
-                console.log("subduction onCommit", { id, loose_commit })
-            }
-        )
+        waitForOpen(ws).then(() => {
+            const wsAdapter = new Wasm.SubductionWebSocket(subPeerId, ws, 5000)
 
-        subduction.onFragment(
-            (id: Wasm.PeerId, fragment: Wasm.Fragment, _blob: Uint8Array) => {
-                console.log("subduction onFragment", { id, fragment })
-            }
-        )
+            subduction.attach(wsAdapter).then(() => {
+                console.log("Subduction attached to WebSocket")
 
-        subduction.onBlob((_blob: Uint8Array) => {
-            console.log("subduction onBlob")
+                subduction.onCommit(
+                    (
+                        id: Wasm.PeerId,
+                        loose_commit: Wasm.LooseCommit,
+                        _blob: Uint8Array
+                    ) => {
+                        console.log("subduction onCommit", { id, loose_commit })
+                    }
+                )
+
+                subduction.onFragment(
+                    (
+                        id: Wasm.PeerId,
+                        fragment: Wasm.Fragment,
+                        _blob: Uint8Array
+                    ) => {
+                        console.log("subduction onFragment", { id, fragment })
+                    }
+                )
+
+                subduction.onBlob((_blob: Uint8Array) => {
+                    console.log("subduction onBlob")
+                })
+            })
         })
 
         this.#subduction = subduction
@@ -406,6 +435,15 @@ export class Repo extends EventEmitter<RepoEvents> {
     // The `document` event is fired by the DocCollection any time we create a new document or look
     // up a document by ID. We listen for it in order to wire up storage and network synchronization.
     #registerHandleWithSubsystems(handle: DocHandle<any>) {
+        const out = new Uint8Array(32)
+        const docIdBytes = toBinaryDocumentId(handle.documentId)
+        out.set(docIdBytes.slice(0, 32))
+        const sid = Wasm.SedimentreeId.fromBytes(out)
+        this.#subduction.addSedimentree(sid, Wasm.Sedimentree.empty())
+        console.info("added sedimentree to subduction", {
+            documentId: handle.documentId,
+        })
+
         if (this.storageSubsystem) {
             // Add save function as a listener if it's not already registered
             const existingListeners = handle.listeners("heads-changed")
@@ -413,18 +451,108 @@ export class Repo extends EventEmitter<RepoEvents> {
                 !existingListeners.some(listener => listener === this.#saveFn)
             ) {
                 // Save when the document changes
-                handle.on("heads-changed", this.#saveFn)
+                handle.on("heads-changed", docHandle => {
+                    console.info("heads-changed, saving")
+                    this.#saveFn(docHandle)
+                })
             }
         }
 
-        const sed = Wasm.Sedimentree.empty()
-        console.log(handle.documentId)
-        // FIXME const id = digestOfBase58Id(handle.documentId)
-        // const id = Wasm.SedimentreeId.fromBytes(new Uint8Array(32)) // FIXME
-        // this.#subduction.addSedimentree(id, sed)
-        // this.#log("added sedimentree to subduction", {
-        //   documentId: handle.documentId,
-        // })
+        handle.on("heads-changed", _x => {
+            console.warn("heads-changed event fired")
+            const currentHexHeads = Automerge.getHeads(handle.doc())
+            if (new Set(currentHexHeads) == this.#lastHeadsSent) {
+                console.debug("nothing new to send, skipping sync...")
+                return
+            }
+
+            Automerge.getChangesMetaSince(
+                handle.doc(),
+                Array.from(this.#lastHeadsSent)
+            ).forEach(meta => {
+                const hexHash = meta.hash
+                if (!this.#recentlySeenHeads.add(hexHash)) {
+                    console.debug(
+                        `already recently seen ${hexHash}, skipping sync...`
+                    )
+                }
+                // HACK: the horror!  👹
+                const sym = Object.getOwnPropertySymbols(handle.doc()).find(
+                    s => s.description === "_am_meta"
+                )!
+                const innerDoc = (handle.doc() as any)[sym].handle
+
+                const commitBytes = innerDoc.getChangeByHash(hexHash)
+                const binHash = new Uint8Array(hexHash.length / 2)
+                for (let i = 0; i < out.length; i++) {
+                    binHash[i] = parseInt(hexHash.slice(i * 2, i * 2 + 2), 16)
+                }
+                const digest = new Wasm.Digest(binHash)
+                const parents = meta.deps.map(depHexHash => {
+                    const bin = new Uint8Array(depHexHash.length / 2)
+                    for (let i = 0; i < out.length; i++) {
+                        bin[i] = parseInt(
+                            depHexHash.slice(i * 2, i * 2 + 2),
+                            16
+                        )
+                    }
+                    return new Wasm.Digest(bin)
+                })
+                const blobMeta = new Wasm.BlobMeta(commitBytes)
+                const looseCommit = new Wasm.LooseCommit(
+                    digest,
+                    parents,
+                    blobMeta
+                )
+                ;(window as any)["debugLooseCommit"] = looseCommit // for debugging
+
+                this.#subduction
+                    .addCommit(sid, looseCommit, commitBytes)
+                    .then(maybeFragmentRequested => {
+                        if (
+                            maybeFragmentRequested !== null &&
+                            maybeFragmentRequested !== undefined
+                        ) {
+                            const fragmentRequested: Wasm.FragmentRequested =
+                                maybeFragmentRequested
+                            console.debug("commit needs fragment, creating...")
+
+                            const sam = new Wasm.SedimentreeAutomerge(
+                                handle.doc()
+                            )
+                            const fragmentState = sam.fragment(
+                                fragmentRequested.head,
+                                this.#fragmentStateStore,
+                                new Wasm.HashMetric(null)
+                            )
+                            const members = fragmentState
+                                .members()
+                                .map(digest => {
+                                    return Array.from(digest.toBytes(), b =>
+                                        b.toString(16).padStart(2, "0")
+                                    ).join("")
+                                })
+                            const fragmentBlob = Automerge.saveBundle(
+                                handle.doc(),
+                                members
+                            )
+                            const blobMeta = new Wasm.BlobMeta(fragmentBlob)
+                            const fragment =
+                                fragmentState.intoFragment(blobMeta)
+
+                            this.#subduction
+                                .addFragment(sid, fragment, fragmentBlob)
+                                .catch(console.error)
+                        }
+                    })
+
+                this.#lastHeadsSent = new Set(currentHexHeads)
+            })
+        })
+
+        handle.on("heads-changed", docHandle => {
+            this.#saveFn(docHandle)
+        })
 
         // Register the document with the synchronizer. This advertises our interest in the document.
         this.synchronizer.addDocument(handle)
@@ -491,6 +619,7 @@ export class Repo extends EventEmitter<RepoEvents> {
         /** The documentId of the handle to look up or create */
         documentId: DocumentId /** If we know we're creating a new document, specify this so we can have access to it immediately */
     }) {
+        console.debug("#getHandle", { documentId })
         // If we have the handle cached, return it FIXME NOW UNDER SUBDUCTION?
         if (this.#handleCache[documentId]) return this.#handleCache[documentId]
 
@@ -654,56 +783,65 @@ export class Repo extends EventEmitter<RepoEvents> {
             : { documentId: interpretAsDocumentId(id), heads: undefined }
 
         // Check handle cache first - return plain FindStep for terminal states
-        if (this.#handleCache[documentId]) {
-            const handle = this.#handleCache[documentId]
-            if (handle.state === UNAVAILABLE) {
-                const result = {
-                    state: "unavailable" as const,
-                    error: new Error(`Document ${id} is unavailable`),
-                    handle,
-                }
-                return result
-            }
-            if (handle.state === DELETED) {
-                const result = {
-                    state: "failed" as const,
-                    error: new Error(`Document ${id} was deleted`),
-                    handle,
-                }
-                return result
-            }
-            if (handle.state === READY) {
-                const result = {
-                    state: "ready" as const,
-                    handle: heads ? handle.view(heads) : handle,
-                }
-                return result
-            }
-        }
+        // if (this.#handleCache[documentId]) {
+        //     console.info("have handle")
+        //     const handle = this.#handleCache[documentId]
+        //     if (handle.state === UNAVAILABLE) {
+        //         console.info("handle unavailable")
+        //         const result = {
+        //             state: "unavailable" as const,
+        //             error: new Error(`Document ${id} is unavailable`),
+        //             handle,
+        //         }
+        //         return result
+        //     }
+        //     if (handle.state === DELETED) {
+        //         console.info("handle deleted")
+        //         const result = {
+        //             state: "failed" as const,
+        //             error: new Error(`Document ${id} was deleted`),
+        //             handle,
+        //         }
+        //         return result
+        //     }
+        //     if (handle.state === READY) {
+        //         console.info("handle ready")
+        //         const result = {
+        //             state: "ready" as const,
+        //             handle: heads ? handle.view(heads) : handle,
+        //         }
+        //         return result
+        //     }
+        // }
 
+        console.info("about to check progress cache")
         // Check progress cache for any existing signal
-        const cachedProgress = this.#progressCache[documentId]
-        if (cachedProgress) {
-            const handle = this.#handleCache[documentId]
-            // Return cached progress if we have a handle and it's either in a terminal state or loading
-            if (
-                handle &&
-                (handle.state === READY ||
-                    handle.state === UNAVAILABLE ||
-                    handle.state === DELETED ||
-                    handle.state === "loading")
-            ) {
-                return cachedProgress as FindProgressWithMethods<T>
-            }
-        }
+        // const cachedProgress = this.#progressCache[documentId]
+        // if (cachedProgress) {
+        //     console.info("have cached progress")
+        //     const handle = this.#handleCache[documentId]
+        //     // Return cached progress if we have a handle and it's either in a terminal state or loading
+        //     if (
+        //         handle &&
+        //         (handle.state === READY ||
+        //             handle.state === UNAVAILABLE ||
+        //             handle.state === DELETED ||
+        //             handle.state === "loading")
+        //     ) {
+        //         return cachedProgress as FindProgressWithMethods<T>
+        //     }
+        // }
 
+        console.info("Getting new handle")
         const handle = this.#getHandle<T>({ documentId })
+        console.info("DOC ID HANDLE", handle)
         const initial = {
             state: "loading" as const,
             progress: 0,
             handle,
         }
 
+        console.info("Making progress signal")
         // Create a new progress signal
         const progressSignal = {
             subscribers: new Set<(progress: FindProgress<T>) => void>(),
@@ -723,8 +861,10 @@ export class Repo extends EventEmitter<RepoEvents> {
             },
         }
 
+        console.info("notifying")
         progressSignal.notify(initial)
 
+        console.info("got doc with progress")
         // Start the loading process
         void this.#loadDocumentWithProgress(
             id,
@@ -735,6 +875,7 @@ export class Repo extends EventEmitter<RepoEvents> {
                 ? abortable(new Promise(() => {}), signal)
                 : new Promise(() => {})
         )
+        console.info("got doc with progress")
 
         const result = {
             ...initial,
@@ -755,6 +896,47 @@ export class Repo extends EventEmitter<RepoEvents> {
         abortPromise: Promise<never>
     ) {
         console.log("loadDocumentWithProgress", { id, documentId })
+
+        console.warn(">>>>>>>>>>>>>>>>>>   loading with progress", {
+            id,
+        })
+        const docIdBytes = toBinaryDocumentId(id)
+        const stringBuffer = await crypto.subtle.digest(
+            "SHA-256",
+            docIdBytes as unknown as BufferSource
+        )
+        const rawSedimentreeId = new Uint8Array(stringBuffer)
+        console.warn("subduction rawId", { rawSedimentreeId })
+        const sedimentreeId = Wasm.SedimentreeId.fromBytes(rawSedimentreeId)
+        console.warn(
+            "sedId",
+            sedimentreeId.toString(),
+            sedimentreeId,
+            this.#subduction
+        )
+        const peerResultMap = await this.#subduction.requestAllBatchSync(
+            sedimentreeId,
+            null
+        )
+        console.log("subduction peerResultMap", {
+            peerResultMap,
+            entries: peerResultMap.entries(),
+        })
+        peerResultMap.entries().forEach(batchSyncResult => {
+            if (!batchSyncResult.success) {
+                console.warn("failed PeerBatchSyncResult")
+            }
+
+            for (const err in batchSyncResult.connErrors) {
+                console.error("PeerBatchSyncResult connError: ", err)
+            }
+
+            console.info("blobs len", batchSyncResult.blobs.length)
+            batchSyncResult.blobs.forEach(bundleBlob => {
+                Automerge.loadIncremental(handle.doc(), bundleBlob)
+            })
+        })
+
         try {
             progressSignal.notify({
                 state: "loading" as const,
@@ -831,40 +1013,63 @@ export class Repo extends EventEmitter<RepoEvents> {
         console.log("find", { id })
         const { allowableStates = ["ready"], signal } = options
 
+        const progress = this.findWithProgress<T>(id, { signal })
+        console.warn("find", { id, allowableStates })
+        const docIdBytes = toBinaryDocumentId(id)
+        const stringBuffer = await crypto.subtle.digest(
+            "SHA-256",
+            docIdBytes as unknown as BufferSource
+        )
+        const rawSedimentreeId = new Uint8Array(stringBuffer)
+        const subductionId = Wasm.SedimentreeId.fromBytes(rawSedimentreeId)
+        console.warn("subduction find", subductionId)
+        const peerResultMap = await this.#subduction.requestAllBatchSync(
+            subductionId
+        )
+        console.log("subduction peerResultMap", {
+            peerResultMap,
+            entries: peerResultMap.entries(),
+        })
+        peerResultMap.entries().forEach(batchSyncResult => {
+            if (!batchSyncResult.success) {
+                console.warn("failed PeerBatchSyncResult")
+            }
+
+            for (const err in batchSyncResult.connErrors) {
+                console.error("PeerBatchSyncResult connError: ", err)
+            }
+
+            console.info("blobs len", batchSyncResult.blobs.length)
+            batchSyncResult.blobs.forEach(bundleBlob => {
+                Automerge.loadIncremental(progress.handle.doc(), bundleBlob)
+            })
+        })
+
         // Check if already aborted
         if (signal?.aborted) {
             throw new AbortError()
         }
-
-        console.warn("find", { id, allowableStates })
-        const sid = Wasm.SedimentreeId.fromBytes(new Uint8Array(32)) // FIXME
-        this.#subduction.requestAllBatchSync(sid).then(() => {
-            console.log("subduction requestAllBatchSync complete")
-        })
-
-        const progress = this.findWithProgress<T>(id, { signal })
 
         if ("subscribe" in progress) {
             this.#registerHandleWithSubsystems(progress.handle)
             console.log("state", progress.handle.state)
             return new Promise((resolve, reject) => {
                 const unsubscribe = progress.subscribe(state => {
+                    console.info("progress state", state.handle.state)
+                    console.info("allowableStates", allowableStates)
                     if (allowableStates.includes(state.handle.state)) {
+                        console.debug("resolving", { state })
                         unsubscribe()
                         resolve(state.handle)
                     } else if (state.state === "unavailable") {
+                        console.debug("unavailable")
                         unsubscribe()
                         reject(new Error(`Document ${id} is unavailable`))
                     } else if (state.state === "failed") {
+                        console.debug("failed", { state })
                         unsubscribe()
                         reject(state.error)
                     }
-                    console.warn(
-                        "state not in allowable states:",
-                        progress.handle.state,
-                        "not in",
-                        allowableStates
-                    )
                 })
             })
         } else {
@@ -879,6 +1084,7 @@ export class Repo extends EventEmitter<RepoEvents> {
             ) {
                 throw new Error(`Document ${id} is unavailable`)
             }
+
             return progress.handle
         }
     }
@@ -905,13 +1111,34 @@ export class Repo extends EventEmitter<RepoEvents> {
             handle.update(() => loadedDoc as Automerge.Doc<T>)
             handle.doneLoading()
         } else {
-            const subduction_id = digestOfBase58Id(documentId)
-            await this.#subduction.requestAllBatchSync(subduction_id)
+            const docIdBytes = toBinaryDocumentId(handle.documentId)
+            const stringBuffer = await crypto.subtle.digest(
+                "SHA-256",
+                docIdBytes as unknown as BufferSource
+            )
+            const rawSedimentreeId = new Uint8Array(stringBuffer)
+            const sedimentreeId = Wasm.SedimentreeId.fromBytes(rawSedimentreeId)
+            await this.#subduction.requestAllBatchSync(sedimentreeId)
         }
 
         console.log("subduction loadDocument")
-        const subduction_id = digestOfBase58Id(documentId)
-        await this.#subduction.requestAllBatchSync(subduction_id) // FIXME just here for testing
+        const subduction_id = Wasm.SedimentreeId.fromBytes(
+            toBinaryDocumentId(documentId)
+        )
+        // FIXME just here for testing
+        const peerResultMap = await this.#subduction.requestAllBatchSync(
+            subduction_id
+        )
+        console.log("subduction peerResultMap", {
+            peerResultMap,
+            entries: peerResultMap.entries(),
+        })
+        peerResultMap.entries().forEach(result => {
+            result.blobs.forEach(bundleBlob => {
+                Automerge.loadIncremental(handle.doc(), bundleBlob)
+            })
+        })
+
         this.#registerHandleWithSubsystems(handle)
         return handle
     }
@@ -1080,6 +1307,13 @@ export class Repo extends EventEmitter<RepoEvents> {
             delete this.#progressCache[documentId]
             delete this.#saveFns[documentId]
             this.synchronizer.removeDocument(documentId)
+
+            // FIXME cleanup, maybe even put this in sedimentree-automerge
+            const out = new Uint8Array(32)
+            const docIdBytes = toBinaryDocumentId(handle.documentId)
+            out.set(docIdBytes.slice(0, 32))
+            const sid = Wasm.SedimentreeId.fromBytes(out)
+            this.#subduction.removeSedimentree(sid)
         } else {
             this.#log(
                 `WARN: removeFromCache called but doc undefined for documentId: ${documentId}`
@@ -1237,3 +1471,81 @@ export type DocMetrics =
           type: "doc-denied"
           documentId: DocumentId
       }
+
+export function toBinaryDocumentId(id: AnyDocumentId): Uint8Array {
+    if (id instanceof Uint8Array) {
+        return id
+    }
+
+    if (typeof id === "string") {
+        if (id.startsWith("automerge:")) {
+            return bs58check.decode(id.slice("automerge:".length))
+        }
+
+        // Legacy hex-encoded UUID
+        if (/^[0-9a-fA-F]{32,}$/.test(id)) {
+            const bytes = new Uint8Array(id.length / 2)
+            for (let i = 0; i < bytes.length; i++) {
+                bytes[i] = parseInt(id.substr(i * 2, 2), 16)
+            }
+            return bytes
+        }
+
+        return bs58check.decode(id)
+    }
+
+    throw new TypeError("Unsupported document ID format")
+}
+
+class HashRing {
+    #ring: (string | null)[]
+    #seen = new Set<string>()
+    #focus = 0
+
+    constructor(private capacity: number) {
+        this.#ring = Array(capacity).fill(null)
+    }
+
+    has(hash: string): boolean {
+        return this.#seen.has(hash)
+    }
+
+    add(hash: string): boolean {
+        if (this.has(hash)) return false
+
+        const toEvict = this.#ring[this.#focus]
+        if (toEvict !== null) this.#seen.delete(toEvict)
+        this.#seen.add(hash)
+
+        this.#ring[this.#focus] = hash
+        this.#focus = (this.#focus + 1) % this.#ring.length
+
+        return true
+    }
+
+    size() {
+        return this.#seen.size
+    }
+}
+
+async function waitForOpen(ws: WebSocket) {
+    if (ws.readyState === WebSocket.OPEN) return
+
+    await new Promise<void>((resolve, reject) => {
+        const onOpen = () => {
+            cleanup()
+            resolve()
+        }
+        const onError = () => {
+            cleanup()
+            reject(new Error("WebSocket failed to open"))
+        }
+        const cleanup = () => {
+            ws.removeEventListener("open", onOpen)
+            ws.removeEventListener("error", onError)
+        }
+
+        ws.addEventListener("open", onOpen, { once: true })
+        ws.addEventListener("error", onError, { once: true })
+    })
+}

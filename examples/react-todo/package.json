@@ -1,25 +1,24 @@
 {
-  "name": "@automerge/automerge-repo-demo-todo",
-  "repository": "https://github.com/automerge/automerge-repo/tree/master/examples/react-todo",
-  "private": true,
-  "version": "2.5.0-alpha.2",
-  "type": "module",
-  "scripts": {
-    "dev": "vite --open",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@automerge/react": "workspace:*",
-    "@automerge/sedimentree_automerge": "file:../../../subduction/sedimentree_automerge_wasm",
-    "@automerge/subduction": "file:../../../subduction/subduction_wasm",
-    "autoprefixer": "^10.4.21",
-    "classnames": "^2.5.1",
-    "postcss": "^8.5.6",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-error-boundary": "^5.0.0"
-  },
-  "devDependencies": {
-    "tailwindcss": "^3.4.18"
-  }
+    "name": "@automerge/automerge-repo-demo-todo",
+    "repository": "https://github.com/automerge/automerge-repo/tree/master/examples/react-todo",
+    "private": true,
+    "version": "2.5.0-alpha.2",
+    "type": "module",
+    "scripts": {
+        "dev": "vite --open",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "@automerge/react": "workspace:*",
+        "@automerge/subduction_automerge": "file:../../../subduction/subduction_automerge_wasm",
+        "autoprefixer": "^10.4.21",
+        "classnames": "^2.5.1",
+        "postcss": "^8.5.6",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "react-error-boundary": "^5.0.0"
+    },
+    "devDependencies": {
+        "tailwindcss": "^3.4.18"
+    }
 }
