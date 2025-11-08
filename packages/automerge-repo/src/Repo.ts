@@ -397,9 +397,7 @@ export class Repo extends EventEmitter<RepoEvents> {
             // your callback logic here
         })
 
-        waitForOpen(ws).then(() => {
-            const wsAdapter = new Wasm.SubductionWebSocket(subPeerId, ws, 5000)
-
+        Wasm.SubductionWebSocket.setup(subPeerId, ws, 5000).then(wsAdapter => {
             subduction.attach(wsAdapter).then(() => {
                 console.log("Subduction attached to WebSocket")
 
@@ -1526,26 +1524,4 @@ class HashRing {
     size() {
         return this.#seen.size
     }
-}
-
-async function waitForOpen(ws: WebSocket) {
-    if (ws.readyState === WebSocket.OPEN) return
-
-    await new Promise<void>((resolve, reject) => {
-        const onOpen = () => {
-            cleanup()
-            resolve()
-        }
-        const onError = () => {
-            cleanup()
-            reject(new Error("WebSocket failed to open"))
-        }
-        const cleanup = () => {
-            ws.removeEventListener("open", onOpen)
-            ws.removeEventListener("error", onError)
-        }
-
-        ws.addEventListener("open", onOpen, { once: true })
-        ws.addEventListener("error", onError, { once: true })
-    })
 }
