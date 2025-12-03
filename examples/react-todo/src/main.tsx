@@ -7,15 +7,7 @@ import {
     IndexedDBStorageAdapter,
     RepoContext,
 } from "@automerge/react"
-import {
-    PeerId,
-    IndexedDbStorage,
-    Subduction,
-    SedimentreeId,
-    LooseCommit,
-    Fragment,
-    Digest,
-} from "@automerge/subduction_automerge"
+import { IndexedDbStorage, Subduction } from "@automerge/subduction_automerge"
 import {
     next as Automerge,
     encodeChange,
@@ -31,6 +23,8 @@ import "./index.css"
 ;(async () => {
     const db = await IndexedDbStorage.setup(indexedDB)
     const subduction = new Subduction(db)
+
+    ;(window as any)["am"] = Automerge // for debugging
 
     const oldDb = new IndexedDBStorageAdapter("automerge-repo-demo-todo")
     const repo = new Repo({

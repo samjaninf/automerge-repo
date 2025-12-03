@@ -80,7 +80,9 @@ const stringMetric = new Wasm.HashMetric(null)
  */
 export class Repo extends EventEmitter<RepoEvents> {
     #log: debug.Debugger
+
     #subduction: Wasm.Subduction
+    #handlesBySedimentreeId: Map<string, DocHandle<any>>
     #fragmentStateStore: Wasm.FragmentStateStore
     #recentlySeenHeads: HashRing
     #lastHeadsSent: Set<string>
@@ -143,6 +145,7 @@ export class Repo extends EventEmitter<RepoEvents> {
         this.#fragmentStateStore = new Wasm.FragmentStateStore()
         this.#recentlySeenHeads = new HashRing(256)
         this.#lastHeadsSent = new Set<string>()
+        this.#handlesBySedimentreeId = new Map()
 
         this.#remoteHeadsGossipingEnabled = enableRemoteHeadsGossiping
         this.#log = debug(`automerge-repo:repo`)
@@ -401,28 +404,60 @@ export class Repo extends EventEmitter<RepoEvents> {
             subduction.attach(wsAdapter).then(() => {
                 console.log("Subduction attached to WebSocket")
 
+                // Incremental sync
                 subduction.onCommit(
                     (
-                        id: Wasm.PeerId,
+                        id: Wasm.SedimentreeId,
                         loose_commit: Wasm.LooseCommit,
-                        _blob: Uint8Array
+                        blob: Uint8Array
                     ) => {
-                        console.log("subduction onCommit", { id, loose_commit })
+                        console.debug("subduction onCommit", {
+                            id,
+                            loose_commit,
+                        })
+                        const handle = this.#handlesBySedimentreeId.get(
+                            id.toString()
+                        )
+                        ;(window as any)["handle"] = handle // for debugging
+
+                        if (handle !== undefined) {
+                            console.log("blob", blob)
+                            Automerge.loadIncremental(handle.doc(), blob)
+                            handle.doneLoading()
+                        } else {
+                            console.warn("no handle for sedimentree id", { id })
+                        }
                     }
                 )
 
+                // Incremental sync
                 subduction.onFragment(
                     (
-                        id: Wasm.PeerId,
+                        id: Wasm.SedimentreeId,
                         fragment: Wasm.Fragment,
-                        _blob: Uint8Array
+                        blob: Uint8Array
                     ) => {
-                        console.log("subduction onFragment", { id, fragment })
+                        console.debug("subduction onFragment", { id, fragment })
+                        const handle = this.#handlesBySedimentreeId.get(
+                            id.toString()
+                        )
+                        if (handle !== undefined && handle !== null) {
+                            console.log("blob", blob)
+                            Automerge.loadIncremental(handle.doc(), blob)
+                            handle.doneLoading()
+                        } else {
+                            // FIXME error ahndling if no such handle and/or create one?
+                            console.warn("no handle for sedimentree id", {
+                                id: id.toString(),
+                            })
+                        }
                     }
                 )
 
+                // FIXME double check if we can remove this from the protocol
                 subduction.onBlob((_blob: Uint8Array) => {
                     console.log("subduction onBlob")
+                    // FIXME need the id
                 })
             })
         })
@@ -433,123 +468,134 @@ export class Repo extends EventEmitter<RepoEvents> {
     // The `document` event is fired by the DocCollection any time we create a new document or look
     // up a document by ID. We listen for it in order to wire up storage and network synchronization.
     #registerHandleWithSubsystems(handle: DocHandle<any>) {
-        const out = new Uint8Array(32)
-        const docIdBytes = toBinaryDocumentId(handle.documentId)
-        out.set(docIdBytes.slice(0, 32))
-        const sid = Wasm.SedimentreeId.fromBytes(out)
-        this.#subduction.addSedimentree(sid, Wasm.Sedimentree.empty())
-        console.info("added sedimentree to subduction", {
-            documentId: handle.documentId,
-        })
+        ;(window as any)["handle"] = handle // for debugging
 
-        if (this.storageSubsystem) {
-            // Add save function as a listener if it's not already registered
-            const existingListeners = handle.listeners("heads-changed")
-            if (
-                !existingListeners.some(listener => listener === this.#saveFn)
-            ) {
-                // Save when the document changes
-                handle.on("heads-changed", docHandle => {
-                    console.info("heads-changed, saving")
-                    this.#saveFn(docHandle)
-                })
-            }
-        }
-
-        handle.on("heads-changed", _x => {
-            console.warn("heads-changed event fired")
-            const currentHexHeads = Automerge.getHeads(handle.doc())
-            if (new Set(currentHexHeads) == this.#lastHeadsSent) {
-                console.debug("nothing new to send, skipping sync...")
-                return
-            }
-
-            Automerge.getChangesMetaSince(
-                handle.doc(),
-                Array.from(this.#lastHeadsSent)
-            ).forEach(meta => {
-                const hexHash = meta.hash
-                if (!this.#recentlySeenHeads.add(hexHash)) {
-                    console.debug(
-                        `already recently seen ${hexHash}, skipping sync...`
+        toSedimentreeId(handle.documentId).then(sid => {
+            this.#handlesBySedimentreeId.set(sid.toString(), handle)
+            this.#subduction.addSedimentree(sid, Wasm.Sedimentree.empty())
+            console.info("added sedimentree to subduction", {
+                documentId: handle.documentId,
+            })
+            // console.info("0");
+            // handle.doneLoading()
+            // console.info("DONE");
+            if (this.storageSubsystem) {
+                // Add save function as a listener if it's not already registered
+                const existingListeners = handle.listeners("heads-changed")
+                if (
+                    !existingListeners.some(
+                        listener => listener === this.#saveFn
                     )
+                ) {
+                    // Save when the document changes
+                    handle.on("heads-changed", docHandle => {
+                        console.info("heads-changed, saving")
+                        this.#saveFn(docHandle)
+                    })
                 }
-                // HACK: the horror!  👹
-                const sym = Object.getOwnPropertySymbols(handle.doc()).find(
-                    s => s.description === "_am_meta"
-                )!
-                const innerDoc = (handle.doc() as any)[sym].handle
+            }
 
-                const commitBytes = innerDoc.getChangeByHash(hexHash)
-                const binHash = new Uint8Array(hexHash.length / 2)
-                for (let i = 0; i < out.length; i++) {
-                    binHash[i] = parseInt(hexHash.slice(i * 2, i * 2 + 2), 16)
+            handle.on("heads-changed", _x => {
+                console.warn("heads-changed event fired")
+                const currentHexHeads = Automerge.getHeads(handle.doc())
+                if (new Set(currentHexHeads) == this.#lastHeadsSent) {
+                    console.debug("nothing new to send, skipping sync...")
+                    return
                 }
-                const digest = new Wasm.Digest(binHash)
-                const parents = meta.deps.map(depHexHash => {
-                    const bin = new Uint8Array(depHexHash.length / 2)
+
+                Automerge.getChangesMetaSince(
+                    handle.doc(),
+                    Array.from(this.#lastHeadsSent)
+                ).forEach(meta => {
+                    const hexHash = meta.hash
+                    if (!this.#recentlySeenHeads.add(hexHash)) {
+                        console.debug(
+                            `already recently seen ${hexHash}, skipping sync...`
+                        )
+                    }
+                    // HACK: the horror!  👹
+                    const sym = Object.getOwnPropertySymbols(handle.doc()).find(
+                        s => s.description === "_am_meta"
+                    )!
+                    const innerDoc = (handle.doc() as any)[sym].handle
+
+                    const commitBytes = innerDoc.getChangeByHash(hexHash)
+                    const binHash = new Uint8Array(hexHash.length / 2)
+                    const out = new Uint8Array(32)
                     for (let i = 0; i < out.length; i++) {
-                        bin[i] = parseInt(
-                            depHexHash.slice(i * 2, i * 2 + 2),
+                        binHash[i] = parseInt(
+                            hexHash.slice(i * 2, i * 2 + 2),
                             16
                         )
                     }
-                    return new Wasm.Digest(bin)
-                })
-                const blobMeta = new Wasm.BlobMeta(commitBytes)
-                const looseCommit = new Wasm.LooseCommit(
-                    digest,
-                    parents,
-                    blobMeta
-                )
-                ;(window as any)["debugLooseCommit"] = looseCommit // for debugging
-
-                this.#subduction
-                    .addCommit(sid, looseCommit, commitBytes)
-                    .then(maybeFragmentRequested => {
-                        if (
-                            maybeFragmentRequested !== null &&
-                            maybeFragmentRequested !== undefined
-                        ) {
-                            const fragmentRequested: Wasm.FragmentRequested =
-                                maybeFragmentRequested
-                            console.debug("commit needs fragment, creating...")
-
-                            const sam = new Wasm.SedimentreeAutomerge(
-                                handle.doc()
+                    const digest = new Wasm.Digest(binHash)
+                    const parents = meta.deps.map(depHexHash => {
+                        const bin = new Uint8Array(depHexHash.length / 2)
+                        for (let i = 0; i < out.length; i++) {
+                            bin[i] = parseInt(
+                                depHexHash.slice(i * 2, i * 2 + 2),
+                                16
                             )
-                            const fragmentState = sam.fragment(
-                                fragmentRequested.head,
-                                this.#fragmentStateStore,
-                                new Wasm.HashMetric(null)
-                            )
-                            const members = fragmentState
-                                .members()
-                                .map(digest => {
-                                    return Array.from(digest.toBytes(), b =>
-                                        b.toString(16).padStart(2, "0")
-                                    ).join("")
-                                })
-                            const fragmentBlob = Automerge.saveBundle(
-                                handle.doc(),
-                                members
-                            )
-                            const blobMeta = new Wasm.BlobMeta(fragmentBlob)
-                            const fragment =
-                                fragmentState.intoFragment(blobMeta)
-
-                            this.#subduction
-                                .addFragment(sid, fragment, fragmentBlob)
-                                .catch(console.error)
                         }
+                        return new Wasm.Digest(bin)
                     })
+                    const blobMeta = new Wasm.BlobMeta(commitBytes)
+                    const looseCommit = new Wasm.LooseCommit(
+                        digest,
+                        parents,
+                        blobMeta
+                    )
+                    ;(window as any)["debugLooseCommit"] = looseCommit // for debugging
 
-                this.#lastHeadsSent = new Set(currentHexHeads)
+                    this.#subduction
+                        .addCommit(sid, looseCommit, commitBytes)
+                        .then(maybeFragmentRequested => {
+                            if (
+                                maybeFragmentRequested !== null &&
+                                maybeFragmentRequested !== undefined
+                            ) {
+                                const fragmentRequested: Wasm.FragmentRequested =
+                                    maybeFragmentRequested
+                                console.debug(
+                                    "commit needs fragment, creating..."
+                                )
+
+                                const sam = new Wasm.SedimentreeAutomerge(
+                                    handle.doc()
+                                )
+                                const fragmentState = sam.fragment(
+                                    fragmentRequested.head,
+                                    this.#fragmentStateStore,
+                                    new Wasm.HashMetric(null)
+                                )
+                                const members = fragmentState
+                                    .members()
+                                    .map(digest => {
+                                        return Array.from(digest.toBytes(), b =>
+                                            b.toString(16).padStart(2, "0")
+                                        ).join("")
+                                    })
+                                const fragmentBlob = Automerge.saveBundle(
+                                    handle.doc(),
+                                    members
+                                )
+                                const blobMeta = new Wasm.BlobMeta(fragmentBlob)
+                                const fragment =
+                                    fragmentState.intoFragment(blobMeta)
+
+                                this.#subduction
+                                    .addFragment(sid, fragment, fragmentBlob)
+                                    .catch(console.error)
+                            }
+                        })
+
+                    this.#lastHeadsSent = new Set(currentHexHeads)
+                })
             })
-        })
 
-        handle.on("heads-changed", docHandle => {
-            this.#saveFn(docHandle)
+            handle.on("heads-changed", docHandle => {
+                this.#saveFn(docHandle)
+            })
         })
 
         // Register the document with the synchronizer. This advertises our interest in the document.
@@ -624,6 +670,7 @@ export class Repo extends EventEmitter<RepoEvents> {
         // If not, create a new handle, cache it, and return it
         if (!documentId) throw new Error(`Invalid documentId ${documentId}`)
         const handle = new DocHandle<T>(documentId)
+        ;(window as any)["handle"] = handle // for debugging
         this.#handleCache[documentId] = handle
         return handle
     }
@@ -755,7 +802,7 @@ export class Repo extends EventEmitter<RepoEvents> {
         if (!clonedHandle.isReady()) {
             throw new Error(
                 `Cloned handle is not yet in ready state.
-        (Try await handle.whenReady() first.)`
+(Try await handle.whenReady() first.)`
             )
         }
 
@@ -898,14 +945,8 @@ export class Repo extends EventEmitter<RepoEvents> {
         console.warn(">>>>>>>>>>>>>>>>>>   loading with progress", {
             id,
         })
-        const docIdBytes = toBinaryDocumentId(id)
-        const stringBuffer = await crypto.subtle.digest(
-            "SHA-256",
-            docIdBytes as unknown as BufferSource
-        )
-        const rawSedimentreeId = new Uint8Array(stringBuffer)
-        console.warn("subduction rawId", { rawSedimentreeId })
-        const sedimentreeId = Wasm.SedimentreeId.fromBytes(rawSedimentreeId)
+        const sedimentreeId = await toSedimentreeId(id)
+        this.#handlesBySedimentreeId.set(sedimentreeId.toString(), handle)
         console.warn(
             "sedId",
             sedimentreeId.toString(),
@@ -931,7 +972,10 @@ export class Repo extends EventEmitter<RepoEvents> {
 
             console.info("blobs len", batchSyncResult.blobs.length)
             batchSyncResult.blobs.forEach(bundleBlob => {
-                Automerge.loadIncremental(handle.doc(), bundleBlob)
+                console.log("normal bundleBlob", bundleBlob)
+                ;(window as any)["handle"] = handle // for debugging
+                handle.update(doc => Automerge.loadIncremental(doc, bundleBlob))
+                handle.doneLoading()
             })
         })
 
@@ -1013,13 +1057,11 @@ export class Repo extends EventEmitter<RepoEvents> {
 
         const progress = this.findWithProgress<T>(id, { signal })
         console.warn("find", { id, allowableStates })
-        const docIdBytes = toBinaryDocumentId(id)
-        const stringBuffer = await crypto.subtle.digest(
-            "SHA-256",
-            docIdBytes as unknown as BufferSource
+        const subductionId = await toSedimentreeId(id)
+        this.#handlesBySedimentreeId.set(
+            subductionId.toString(),
+            progress.handle
         )
-        const rawSedimentreeId = new Uint8Array(stringBuffer)
-        const subductionId = Wasm.SedimentreeId.fromBytes(rawSedimentreeId)
         console.warn("subduction find", subductionId)
         const peerResultMap = await this.#subduction.requestAllBatchSync(
             subductionId
@@ -1039,7 +1081,12 @@ export class Repo extends EventEmitter<RepoEvents> {
 
             console.info("blobs len", batchSyncResult.blobs.length)
             batchSyncResult.blobs.forEach(bundleBlob => {
-                Automerge.loadIncremental(progress.handle.doc(), bundleBlob)
+                console.log("progress bundleBlob", bundleBlob)
+                ;(window as any)["handle"] = progress.handle // for debugging
+                progress.handle.update(doc =>
+                    Automerge.loadIncremental(doc, bundleBlob)
+                )
+                progress.handle.doneLoading()
             })
         })
 
@@ -1080,7 +1127,9 @@ export class Repo extends EventEmitter<RepoEvents> {
                 progress.handle.state === "unavailable" &&
                 !allowableStates.includes(UNAVAILABLE)
             ) {
-                throw new Error(`Document ${id} is unavailable`)
+                throw new Error(
+                    `Document ${id} is unavailable, which is not allowed`
+                )
             }
 
             return progress.handle
@@ -1109,33 +1158,27 @@ export class Repo extends EventEmitter<RepoEvents> {
             handle.update(() => loadedDoc as Automerge.Doc<T>)
             handle.doneLoading()
         } else {
-            const docIdBytes = toBinaryDocumentId(handle.documentId)
-            const stringBuffer = await crypto.subtle.digest(
-                "SHA-256",
-                docIdBytes as unknown as BufferSource
-            )
-            const rawSedimentreeId = new Uint8Array(stringBuffer)
-            const sedimentreeId = Wasm.SedimentreeId.fromBytes(rawSedimentreeId)
+            const sedimentreeId = await toSedimentreeId(handle.documentId)
+            this.#handlesBySedimentreeId.set(sedimentreeId.toString(), handle)
             await this.#subduction.requestAllBatchSync(sedimentreeId)
         }
 
         console.log("subduction loadDocument")
-        const subduction_id = Wasm.SedimentreeId.fromBytes(
-            toBinaryDocumentId(documentId)
-        )
-        // FIXME just here for testing
-        const peerResultMap = await this.#subduction.requestAllBatchSync(
-            subduction_id
-        )
-        console.log("subduction peerResultMap", {
-            peerResultMap,
-            entries: peerResultMap.entries(),
-        })
-        peerResultMap.entries().forEach(result => {
-            result.blobs.forEach(bundleBlob => {
-                Automerge.loadIncremental(handle.doc(), bundleBlob)
-            })
-        })
+
+        // // FIXME just here for testing
+        // const peerResultMap = await this.#subduction.requestAllBatchSync(
+        //     subduction_id
+        // )
+        // console.log("subduction peerResultMap", {
+        //     peerResultMap,
+        //     entries: peerResultMap.entries(),
+        // })
+        // peerResultMap.entries().forEach(result => {
+        //     result.blobs.forEach(bundleBlob => {
+        //         Automerge.loadIncremental(handle.doc(), bundleBlob)
+        //           handle.doneLoading()
+        //     })
+        // })
 
         this.#registerHandleWithSubsystems(handle)
         return handle
@@ -1159,7 +1202,9 @@ export class Repo extends EventEmitter<RepoEvents> {
                 if (!allowableStates) {
                     await handle.whenReady([READY, UNAVAILABLE])
                     if (handle.state === UNAVAILABLE && !signal?.aborted) {
-                        throw new Error(`Document ${id} is unavailable`)
+                        throw new Error(
+                            `classic: Document ${id} is unavailable`
+                        )
                     }
                 }
                 return handle
@@ -1219,7 +1264,11 @@ export class Repo extends EventEmitter<RepoEvents> {
         if (docId != null) {
             const handle = this.#getHandle<T>({ documentId: docId })
             handle.update(doc => {
-                return Automerge.loadIncremental(doc, binary)
+                console.log("binary ", binary)
+
+                const done = Automerge.loadIncremental(doc, binary)
+                handle.doneLoading()
+                return done
             })
             this.#registerHandleWithSubsystems(handle)
             return handle
@@ -1307,10 +1356,7 @@ export class Repo extends EventEmitter<RepoEvents> {
             this.synchronizer.removeDocument(documentId)
 
             // FIXME cleanup, maybe even put this in sedimentree-automerge
-            const out = new Uint8Array(32)
-            const docIdBytes = toBinaryDocumentId(handle.documentId)
-            out.set(docIdBytes.slice(0, 32))
-            const sid = Wasm.SedimentreeId.fromBytes(out)
+            const sid = await toSedimentreeId(handle.documentId)
             this.#subduction.removeSedimentree(sid)
         } else {
             this.#log(
@@ -1406,15 +1452,15 @@ export type SharePolicy = (
  * */
 export type ShareConfig = {
     /**
-   * Whether we should actively announce a document to a peer
+         * Whether we should actively announce a document to a peer
 
-   * @remarks
-   * This functions is called after checking the `access` policy to determine
-   * whether we should announce a document to a connected peer. For example, a
-   * tab connected to a sync server might want to announce every document to the
-   * sync server, but the sync server would not want to announce every document
-   * to every connected peer
-   */
+         * @remarks
+         * This functions is called after checking the `access` policy to determine
+         * whether we should announce a document to a connected peer. For example, a
+         * tab connected to a sync server might want to announce every document to the
+         * sync server, but the sync server would not want to announce every document
+         * to every connected peer
+         */
     announce: SharePolicy
     /**
      * Whether a peer should have access to the document
@@ -1493,6 +1539,20 @@ export function toBinaryDocumentId(id: AnyDocumentId): Uint8Array {
     }
 
     throw new TypeError("Unsupported document ID format")
+}
+
+export async function toSedimentreeId(
+    id: AnyDocumentId
+): Promise<Wasm.SedimentreeId> {
+    const docIdBytes = toBinaryDocumentId(id)
+    const stringBuffer = await crypto.subtle.digest(
+        "SHA-256",
+        docIdBytes as unknown as BufferSource
+    )
+    const rawSedimentreeId = new Uint8Array(stringBuffer)
+    console.warn("subduction rawId", { rawSedimentreeId })
+
+    return Wasm.SedimentreeId.fromBytes(rawSedimentreeId)
 }
 
 class HashRing {

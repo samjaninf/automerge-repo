@@ -586,6 +586,7 @@ export class DocHandle<T> extends EventEmitter<DocHandleEvents<T>> {
      */
     doneLoading() {
         this.#machine.send({ type: DOC_READY })
+        console.log("DONE LOADING")
     }
 
     /**
