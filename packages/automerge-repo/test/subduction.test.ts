@@ -9,7 +9,7 @@ import fs from "fs/promises"
 import { fileURLToPath } from "url"
 import { dirname, join } from "path"
 
-import { Subduction } from "@automerge/subduction_automerge"
+import { Subduction } from "@automerge/automerge_subduction"
 
 describe("Repo subduction integration", () => {
     it("should find documents from subduction", async () => {

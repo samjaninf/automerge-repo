@@ -10,7 +10,7 @@
     },
     "dependencies": {
         "@automerge/react": "workspace:*",
-        "@automerge/subduction_automerge": "file:../../../subduction/subduction_automerge_wasm",
+        "@automerge/automerge_subduction": "file:../../../subduction/automerge_subduction_wasm",
         "autoprefixer": "^10.4.22",
         "classnames": "^2.5.1",
         "postcss": "^8.5.6",

@@ -48,7 +48,7 @@ import type {
 } from "./types.js"
 import { abortable, AbortOptions, AbortError } from "./helpers/abortable.js"
 import { FindProgress } from "./FindProgress.js"
-import * as Wasm from "@automerge/subduction_automerge"
+import * as Wasm from "@automerge/automerge_subduction"
 import * as bs58check from "bs58check"
 import { applyChanges } from "./index.js"
 
@@ -422,7 +422,9 @@ export class Repo extends EventEmitter<RepoEvents> {
 
                         if (handle !== undefined) {
                             console.log("blob", blob)
-                            Automerge.loadIncremental(handle.doc(), blob)
+                            handle.update(doc =>
+                                Automerge.loadIncremental(doc, blob)
+                            )
                             handle.doneLoading()
                         } else {
                             console.warn("no handle for sedimentree id", { id })
@@ -443,7 +445,9 @@ export class Repo extends EventEmitter<RepoEvents> {
                         )
                         if (handle !== undefined && handle !== null) {
                             console.log("blob", blob)
-                            Automerge.loadIncremental(handle.doc(), blob)
+                            handle.update(doc =>
+                                Automerge.loadIncremental(doc, blob)
+                            )
                             handle.doneLoading()
                         } else {
                             // FIXME error ahndling if no such handle and/or create one?
@@ -454,11 +458,11 @@ export class Repo extends EventEmitter<RepoEvents> {
                     }
                 )
 
-                // FIXME double check if we can remove this from the protocol
-                subduction.onBlob((_blob: Uint8Array) => {
-                    console.log("subduction onBlob")
-                    // FIXME need the id
-                })
+                // // FIXME double check if we can remove this from the protocol
+                // subduction.onBlob((_blob: Uint8Array) => {
+                //     console.log("subduction onBlob")
+                //     // FIXME need the id
+                // })
             })
         })
 

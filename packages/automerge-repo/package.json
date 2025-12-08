@@ -25,7 +25,7 @@
     },
     "dependencies": {
         "@automerge/automerge": "^3.2.0",
-        "@automerge/subduction_automerge": "file:../../../subduction/subduction_automerge_wasm",
+        "@automerge/automerge_subduction": "file:../../../subduction/automerge_subduction_wasm",
         "bs58check": "^3.0.1",
         "cbor-x": "^1.6.0",
         "debug": "^4.4.3",

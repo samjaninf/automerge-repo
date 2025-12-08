@@ -7,7 +7,7 @@ import {
     IndexedDBStorageAdapter,
     RepoContext,
 } from "@automerge/react"
-import { IndexedDbStorage, Subduction } from "@automerge/subduction_automerge"
+import { IndexedDbStorage, Subduction } from "@automerge/automerge_subduction"
 import {
     next as Automerge,
     encodeChange,
